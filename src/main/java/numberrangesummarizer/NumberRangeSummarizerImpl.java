@@ -18,8 +18,13 @@ import java.util.stream.Stream;
  */
 public class NumberRangeSummarizerImpl implements NumberRangeSummarizer {
 
+    /** Separates the numbers in the raw input string. */
     private static final String INPUT_DELIMITER = ",";
+
+    /** Separates the groups in the summarized output, for example {@code "1, 3"}. */
     private static final String OUTPUT_DELIMITER = ", ";
+
+    /** Joins the first and last number of a range, for example {@code "6-8"}. */
     private static final String RANGE_DELIMITER = "-";
 
     /**
@@ -35,18 +40,21 @@ public class NumberRangeSummarizerImpl implements NumberRangeSummarizer {
      */
     @Override
     public Collection<Integer> collect(String input) {
+        // Nothing to parse: treat missing input as "no numbers" rather than an error,
+        // so that a caller can pipe collect() straight into summarizeCollection().
         if (input == null || input.trim().isEmpty()) {
             return Collections.emptyList();
         }
 
         List<Integer> numbers = Stream.of(input.split(INPUT_DELIMITER))
-                .map(String::trim)
-                .filter(entry -> !entry.isEmpty())
-                .map(NumberRangeSummarizerImpl::parse)
-                .distinct()
-                .sorted()
+                .map(String::trim)                                  // tolerate "1, 2 , 3"
+                .filter(entry -> !entry.isEmpty())                  // tolerate "1,,2" and "1,2,"
+                .map(NumberRangeSummarizerImpl::parse)              // fails loudly on non-integers
+                .distinct()                                         // a repeated number adds nothing
+                .sorted()                                           // ranges are only meaningful in order
                 .collect(Collectors.toList());
 
+        // Defensive: the parsed result is a value, so callers must not be able to corrupt it.
         return Collections.unmodifiableList(numbers);
     }
 
@@ -67,6 +75,9 @@ public class NumberRangeSummarizerImpl implements NumberRangeSummarizer {
             return "";
         }
 
+        // Do not assume the caller used collect(): sort and deduplicate defensively, into a
+        // new collection so that the caller's collection is never modified. A TreeSet does
+        // both in one pass, and rejecting nulls here keeps the grouping loop below simple.
         TreeSet<Integer> sorted = new TreeSet<>();
         for (Integer number : input) {
             if (number == null) {
@@ -75,24 +86,37 @@ public class NumberRangeSummarizerImpl implements NumberRangeSummarizer {
             sorted.add(number);
         }
 
+        // Single pass over the sorted numbers. A group is an unbroken run of consecutive
+        // values: rangeStart holds the first number of the run currently being built, and
+        // previous holds the last number seen, which is the run's end once the run breaks.
         StringBuilder summary = new StringBuilder();
         Integer rangeStart = null;
         Integer previous = null;
 
         for (Integer current : sorted) {
             if (rangeStart == null) {
+                // First number overall: open the first run.
                 rangeStart = current;
             } else if (!isConsecutive(previous, current)) {
+                // The run broke, so emit the completed run and open a new one at current.
                 appendGroup(summary, rangeStart, previous);
                 rangeStart = current;
             }
+            // Otherwise current extends the open run and only previous needs updating.
             previous = current;
         }
+
+        // The loop always leaves one run open, which is emitted here. This is safe because
+        // the empty case returned early, so there is guaranteed to be at least one number.
         appendGroup(summary, rangeStart, previous);
 
         return summary.toString();
     }
 
+    /**
+     * Converts a single entry to an integer, translating the low-level parse failure into
+     * an argument error that names the offending entry.
+     */
     private static Integer parse(String entry) {
         try {
             return Integer.valueOf(entry);
@@ -101,20 +125,38 @@ public class NumberRangeSummarizerImpl implements NumberRangeSummarizer {
         }
     }
 
-    /** Uses long arithmetic so that a value of {@link Integer#MAX_VALUE} cannot overflow. */
+    /**
+     * Returns whether {@code current} immediately follows {@code previous}.
+     *
+     * <p>The comparison is done in {@code long} arithmetic so that {@code previous + 1}
+     * cannot overflow when {@code previous} is {@link Integer#MAX_VALUE}.</p>
+     */
     private static boolean isConsecutive(int previous, int current) {
         return (long) previous + 1L == (long) current;
     }
 
+    /**
+     * Appends one completed group to the summary, choosing the shortest sensible form:
+     * a single number, a pair listed individually, or a {@code start-end} range.
+     *
+     * @param summary the summary built so far
+     * @param start   the first number of the group
+     * @param end     the last number of the group, equal to {@code start} for a single number
+     */
     private static void appendGroup(StringBuilder summary, int start, int end) {
+        // Every group after the first is preceded by the output delimiter.
         if (summary.length() > 0) {
             summary.append(OUTPUT_DELIMITER);
         }
+
         if (start == end) {
+            // A run of one is just the number itself.
             summary.append(start);
         } else if (isConsecutive(start, end)) {
+            // A run of two: "1-2" is no shorter than "1, 2", so list the numbers instead.
             summary.append(start).append(OUTPUT_DELIMITER).append(end);
         } else {
+            // A run of three or more collapses into a range.
             summary.append(start).append(RANGE_DELIMITER).append(end);
         }
     }
