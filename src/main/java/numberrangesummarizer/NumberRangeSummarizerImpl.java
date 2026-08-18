@@ -1,11 +1,10 @@
 package numberrangesummarizer;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.TreeSet;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 /**
  * Default {@link NumberRangeSummarizer} implementation.
@@ -46,16 +45,24 @@ public class NumberRangeSummarizerImpl implements NumberRangeSummarizer {
             return Collections.emptyList();
         }
 
-        List<Integer> numbers = Stream.of(input.split(INPUT_DELIMITER))
-                .map(String::trim)                                  // tolerate "1, 2 , 3"
-                .filter(entry -> !entry.isEmpty())                  // tolerate "1,,2" and "1,2,"
-                .map(NumberRangeSummarizerImpl::parse)              // fails loudly on non-integers
-                .distinct()                                         // a repeated number adds nothing
-                .sorted()                                           // ranges are only meaningful in order
-                .collect(Collectors.toList());
+        // A TreeSet discards duplicates and maintains ascending order as entries are
+        // inserted, so one pass does the work that a separate deduplicate-then-sort
+        // would do in two. Ordering matters because ranges are only meaningful in
+        // ascending order, and duplicates matter because a repeated number cannot
+        // widen a range and so contributes nothing to the summary.
+        TreeSet<Integer> numbers = new TreeSet<>();
+        for (String entry : input.split(INPUT_DELIMITER)) {
+            String trimmed = entry.trim();          // tolerate "1, 2 , 3"
+            if (trimmed.isEmpty()) {
+                continue;                           // tolerate "1,,2" and a trailing comma
+            }
+            numbers.add(parse(trimmed));            // fails loudly on a non-integer
+        }
 
-        // Defensive: the parsed result is a value, so callers must not be able to corrupt it.
-        return Collections.unmodifiableList(numbers);
+        // Copied into a List so the result is a compact, index-addressable snapshot, and
+        // wrapped as unmodifiable because the parsed result is a value that callers
+        // must not be able to corrupt.
+        return Collections.unmodifiableList(new ArrayList<>(numbers));
     }
 
     /**
