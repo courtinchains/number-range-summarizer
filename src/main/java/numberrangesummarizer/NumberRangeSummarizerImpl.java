@@ -8,12 +8,6 @@ import java.util.TreeSet;
 
 /**
  * Default {@link NumberRangeSummarizer} implementation.
- *
- * <p>The input is parsed into a sorted, duplicate-free collection of integers, which is
- * then rendered as a comma delimited string where runs of three or more consecutive
- * numbers are collapsed into a {@code start-end} range.</p>
- *
- * <p>This class is stateless and therefore thread safe.</p>
  */
 public class NumberRangeSummarizerImpl implements NumberRangeSummarizer {
 
@@ -26,30 +20,14 @@ public class NumberRangeSummarizerImpl implements NumberRangeSummarizer {
     /** Joins the first and last number of a range, for example {@code "6-8"}. */
     private static final String RANGE_DELIMITER = "-";
 
-    /**
-     * Parses a comma delimited string of integers.
-     *
-     * <p>Surrounding whitespace around each number is ignored, empty entries (for example
-     * the gap in {@code "1,,2"} or a trailing comma) are skipped, duplicates are removed
-     * and the result is returned in ascending order.</p>
-     *
-     * @param input the comma delimited input; {@code null} or blank yields an empty collection
-     * @return an unmodifiable, ascending, duplicate-free collection of the parsed numbers
-     * @throws IllegalArgumentException if an entry is not a valid integer
-     */
     @Override
     public Collection<Integer> collect(String input) {
-        // Nothing to parse: treat missing input as "no numbers" rather than an error,
-        // so that a caller can pipe collect() straight into summarizeCollection().
+        // If no input data is given, the program should treat it as zero numbers instead of crashing
         if (input == null || input.trim().isEmpty()) {
             return Collections.emptyList();
         }
 
-        // A TreeSet discards duplicates and maintains ascending order as entries are
-        // inserted, so one pass does the work that a separate deduplicate-then-sort
-        // would do in two. Ordering matters because ranges are only meaningful in
-        // ascending order, and duplicates matter because a repeated number cannot
-        // widen a range and so contributes nothing to the summary.
+        // A TreeSet automatically removes the duplicate items and sorts from smallest to largest
         TreeSet<Integer> numbers = new TreeSet<>();
         for (String entry : input.split(INPUT_DELIMITER)) {
             String trimmed = entry.trim();          // tolerate "1, 2 , 3"
@@ -59,22 +37,12 @@ public class NumberRangeSummarizerImpl implements NumberRangeSummarizer {
             numbers.add(parse(trimmed));            // fails loudly on a non-integer
         }
 
-        // Copied into a List so the result is a compact, index-addressable snapshot, and
-        // wrapped as unmodifiable because the parsed result is a value that callers
-        // must not be able to corrupt.
+        // Copied into a List so the result is fixed and locked; stopping other parts of program from breaking or changing data later
         return Collections.unmodifiableList(new ArrayList<>(numbers));
     }
 
     /**
      * Summarizes a collection of integers, grouping sequential numbers into ranges.
-     *
-     * <p>The collection need not be sorted or free of duplicates: it is normalised before
-     * summarizing. Two consecutive numbers are listed individually (for example
-     * {@code "1, 2"}) because a range is no shorter than the numbers it replaces.</p>
-     *
-     * @param input the numbers to summarize; {@code null} or empty yields an empty string
-     * @return the comma delimited summary, for example {@code "1, 3, 6-8, 12-15"}
-     * @throws IllegalArgumentException if the collection contains a {@code null} element
      */
     @Override
     public String summarizeCollection(Collection<Integer> input) {
@@ -82,9 +50,9 @@ public class NumberRangeSummarizerImpl implements NumberRangeSummarizer {
             return "";
         }
 
-        // Do not assume the caller used collect(): sort and deduplicate defensively, into a
-        // new collection so that the caller's collection is never modified. A TreeSet does
-        // both in one pass, and rejecting nulls here keeps the grouping loop below simple.
+        // Sort and remove duplicates into a NEW collection, so the caller's collection is
+        // never modified. This does not assume the caller used collect().
+        // Any null value is rejected with an error, which keeps the grouping loop below simple.
         TreeSet<Integer> sorted = new TreeSet<>();
         for (Integer number : input) {
             if (number == null) {
@@ -93,9 +61,8 @@ public class NumberRangeSummarizerImpl implements NumberRangeSummarizer {
             sorted.add(number);
         }
 
-        // Single pass over the sorted numbers. A group is an unbroken run of consecutive
-        // values: rangeStart holds the first number of the run currently being built, and
-        // previous holds the last number seen, which is the run's end once the run breaks.
+        // Go through the sorted numbers once and then group numbers together when they follow without any gaps
+        // Note where each group starts and the last number added to it
         StringBuilder summary = new StringBuilder();
         Integer rangeStart = null;
         Integer previous = null;
@@ -105,24 +72,24 @@ public class NumberRangeSummarizerImpl implements NumberRangeSummarizer {
                 // First number overall: open the first run.
                 rangeStart = current;
             } else if (!isConsecutive(previous, current)) {
-                // The run broke, so emit the completed run and open a new one at current.
+                // The sequence ended, so the completed range is added and a new one is started with the current number
                 appendGroup(summary, rangeStart, previous);
                 rangeStart = current;
             }
-            // Otherwise current extends the open run and only previous needs updating.
+            // Else, the current number continues the existing sequence so just update the previous number
             previous = current;
         }
 
-        // The loop always leaves one run open, which is emitted here. This is safe because
-        // the empty case returned early, so there is guaranteed to be at least one number.
+        // The loop always leaves one sequence unfinished, so we add it here
+        // empty list is already handled meaning there is always at least 1 number
         appendGroup(summary, rangeStart, previous);
 
         return summary.toString();
     }
 
     /**
-     * Converts a single entry to an integer, translating the low-level parse failure into
-     * an argument error that names the offending entry.
+     * Converts one value into an integer, if the value is invalid, it gives an error that shows clearly
+     * which value caused the issue
      */
     private static Integer parse(String entry) {
         try {
@@ -135,8 +102,10 @@ public class NumberRangeSummarizerImpl implements NumberRangeSummarizer {
     /**
      * Returns whether {@code current} immediately follows {@code previous}.
      *
-     * <p>The comparison is done in {@code long} arithmetic so that {@code previous + 1}
-     * cannot overflow when {@code previous} is {@link Integer#MAX_VALUE}.</p>
+     * <p>The comparison uses {@code long} arithmetic so that {@code previous + 1} cannot
+     * overflow. Both current call sites pass {@code current > previous}, so {@code previous}
+     * cannot itself be {@link Integer#MAX_VALUE} today: the wider arithmetic is defence
+     * against a future caller, not a guard on a reachable path.</p>
      */
     private static boolean isConsecutive(int previous, int current) {
         return (long) previous + 1L == (long) current;
@@ -151,7 +120,7 @@ public class NumberRangeSummarizerImpl implements NumberRangeSummarizer {
      * @param end     the last number of the group, equal to {@code start} for a single number
      */
     private static void appendGroup(StringBuilder summary, int start, int end) {
-        // Every group after the first is preceded by the output delimiter.
+        // Add a comma before every group except the first one.
         if (summary.length() > 0) {
             summary.append(OUTPUT_DELIMITER);
         }

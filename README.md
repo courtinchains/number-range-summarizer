@@ -39,12 +39,16 @@ String summary = summarizer.summarizeCollection(summarizer.collect("1,3,6,7,8"))
   is given. A `null` element raises an `IllegalArgumentException`.
 - **Two consecutive numbers** are listed individually (`"1, 2"`) rather than as a range,
   because `1-2` is no shorter than the numbers it replaces.
-- **Range boundaries** are compared with `long` arithmetic, so a run ending at
-  `Integer.MAX_VALUE` cannot overflow.
+- **Negative ranges** render with the same hyphen separator as the specified format, so
+  the run -5 to -3 prints as `-5--3`. The separator is kept uniform rather than
+  special-cased for negatives; the behaviour is pinned by a test so it is a visible choice.
+- **Range boundaries** are compared with `long` arithmetic. Both call sites pass
+  `current > previous`, so this is defensive rather than a guard on a reachable path.
 - The implementation is stateless and therefore thread safe.
 
 ## Tests
 
-32 JUnit 5 tests cover the sample input, parsing, ordering, duplicates, whitespace,
-blank and `null` input, invalid entries, negative numbers, the `Integer` bounds,
-single numbers, pairs, multiple ranges, immutability of the input, and the empty case.
+33 JUnit 5 tests cover the sample input, parsing, ordering, duplicates, whitespace,
+blank and `null` input, invalid entries (asserting the error names the offending entry),
+negative numbers and negative ranges, the `Integer` bounds, single numbers, pairs,
+multiple ranges, immutability of the input, and the empty case.

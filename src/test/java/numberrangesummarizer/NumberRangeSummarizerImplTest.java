@@ -107,11 +107,24 @@ class NumberRangeSummarizerImplTest {
         }
 
         @ParameterizedTest
-        @ValueSource(strings = {"1,two,3", "1,2.5", "1,2a", "1,2147483648"})
-        void rejectsEntriesThatAreNotIntegers(String input) {
-            // Words, decimals, trailing characters and out-of-range values must fail loudly:
-            // silently dropping an unparseable entry would produce a quietly wrong summary.
-            assertThrows(IllegalArgumentException.class, () -> summarizer.collect(input));
+        @CsvSource({
+                "'1,two,3', 'two'",         // a word
+                "'1,2.5', '2.5'",           // a decimal
+                "'1,2a', '2a'",             // trailing characters
+                "'1,2147483648', '2147483648'"  // one past Integer.MAX_VALUE
+        })
+        void rejectsEntriesThatAreNotIntegers(String input, String offendingEntry) {
+            // Unparseable entries must fail loudly: silently dropping one would produce a
+            // quietly wrong summary. The message is asserted, not just the exception type,
+            // because NumberFormatException is itself an IllegalArgumentException - so a
+            // type-only assertion would still pass if the error wrapping were deleted.
+            IllegalArgumentException thrown = assertThrows(IllegalArgumentException.class,
+                    () -> summarizer.collect(input));
+
+            // The full message is asserted rather than just the entry, because the underlying
+            // NumberFormatException already quotes the entry ("For input string: ...") and so
+            // a looser check would still pass if the error wrapping were removed.
+            assertEquals("Not a valid integer: \"" + offendingEntry + "\"", thrown.getMessage());
         }
 
         @Test
@@ -139,6 +152,16 @@ class NumberRangeSummarizerImplTest {
         })
         void summarizesGroups(String input, String expected) {
             assertEquals(expected, summarizer.summarizeCollection(summarizer.collect(input)));
+        }
+
+        @Test
+        @DisplayName("A range of negative numbers uses the same hyphen separator")
+        void summarizesARangeOfNegativeNumbers() {
+            // Documents a known wart: a negative range renders with a double hyphen ("-5--3").
+            // The separator is kept consistent with the format the exercise specifies ("6-8")
+            // rather than special-cased, so the output stays uniform. Pinned here so the
+            // behaviour is a deliberate, visible choice rather than an accident.
+            assertEquals("-5--3", summarizer.summarizeCollection(summarizer.collect("-5,-4,-3")));
         }
 
         @Test
@@ -178,10 +201,12 @@ class NumberRangeSummarizerImplTest {
         }
 
         @Test
-        @DisplayName("A range ending at Integer.MAX_VALUE does not overflow")
+        @DisplayName("A range ending at Integer.MAX_VALUE is summarized correctly")
         void handlesTheUpperIntegerBound() {
-            // Guards the long arithmetic in isConsecutive(): with int arithmetic,
-            // MAX_VALUE + 1 wraps to MIN_VALUE and this range would be broken up.
+            // Boundary case: a run that ends at the largest possible int still forms one range.
+            // Note this does NOT exercise the long arithmetic in isConsecutive(): that method is
+            // only called with current > previous, so previous can never be MAX_VALUE and the
+            // int form would pass here too. The wider arithmetic is defensive, not load-bearing.
             List<Integer> upperBound = Arrays.asList(
                     Integer.MAX_VALUE - 2, Integer.MAX_VALUE - 1, Integer.MAX_VALUE);
 
